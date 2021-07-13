@@ -1,0 +1,81 @@
+version: "3.6"
+services:
+  #############################
+  # Setup the mongoDb container
+  #############################
+  mongodb:
+    image: mongo:${MONGO_VERSION:-latest}
+    restart: unless-stopped
+    container_name: ${PROJECT_NAME}_mongodb
+    logging:
+      driver: none
+    hostname: ${MONGO_HOSTNAME}
+    volumes:
+      - ./.docker/mongodb/mongod.conf:/etc/mongod.conf #allowing easy modifications to MongoDB configuration
+      - ./.docker/mongodb/initdb.d/:/docker-entrypoint-initdb.d/ #allowing easy modifications to .sh and .js container initialization files
+      - ./.docker/mongodb/data/db/:/data/db/ #storing MongoDB database files locally
+      - ./.docker/mongodb/data/log/:/var/log/mongodb/ #storing MongoDB log files locally
+    env_file:
+      - .env
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE}
+    ports:
+      - "${MONGO_EXTERNAL_PORT:-27017}:${MONGO_PORT:-27017}"
+    command: ["-f", "/etc/mongod.conf", "--quiet"] #override the default command to start the service
+  ############################
+  # Setup the nodeJS container
+  ############################
+  app:
+    build: .docker/node
+    container_name: ${PROJECT_NAME}_node
+    user: node
+    restart: always
+    working_dir: "/usr/app"
+    volumes:
+      - ./:/usr/app
+    env_file:
+      - .env
+    environment:
+      - WAIT_HOSTS=${MONGO_HOSTNAME:-mongodb}:${MONGO_PORT:-27017} #comma separated list of pairs host:port for which you want to wait.
+      - WAIT_SLEEP_INTERVAL=${WAIT_SLEEP_INTERVAL:-10}
+      - WAIT_HOST_CONNECT_TIMEOUT=${WAIT_HOST_CONNECT_TIMEOUT:-30}
+    ports:
+      - "${PORT}:3000"
+    command: bash -c "/wait && npm run nodemon"
+    depends_on:
+      - mongodb
+  ###################################
+  # Setup the mongo express container
+  ###################################
+  mongo-express:
+    container_name: ${PROJECT_NAME}_mongo-express
+    image: mongo-express
+    logging:
+      driver: none
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=${MONGO_HOSTNAME}
+      - ME_CONFIG_MONGODB_PORT=${MONGO_PORT}
+      - ME_CONFIG_MONGODB_ENABLE_ADMIN=true
+      - ME_CONFIG_MONGODB_AUTH_DATABASE=${MONGO_INITDB_DATABASE}
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=${MONGO_INITDB_ROOT_USERNAME}
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=${MONGO_INITDB_ROOT_PASSWORD}
+      - ME_CONFIG_BASICAUTH_USERNAME=${MONGO_EXPRESS_LOGIN}
+      - ME_CONFIG_BASICAUTH_PASSWORD=${MONGO_EXPRESS_PASSWORD}
+      - WAIT_HOSTS=${MONGO_HOSTNAME:-mongodb}:${MONGO_PORT:-27017} #comma separated list of pairs host:port for which you want to wait.
+      - WAIT_SLEEP_INTERVAL=${WAIT_SLEEP_INTERVAL:-10}
+      - WAIT_HOST_CONNECT_TIMEOUT=${WAIT_HOST_CONNECT_TIMEOUT:-30}
+    ports:
+      - '${MONGO_EXPRESS_PORT}:8081'
+    depends_on:
+      - mongodb
+    volumes:
+      - ./data:/data/db
+  redis:
+    image: bitnami/redis:latest
+    container_name: ${PROJECT_NAME}_redis_cache
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+    ports:
+      - "${REDIS_PORT}:6379"
